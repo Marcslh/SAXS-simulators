@@ -1,0 +1,142 @@
+# MC_ContrastDroplet_poly.py
+
+Monte Carlo SAXS simulator of PDB proteins adsorbed on a polydisperse oil droplet surface.
+
+## Overview
+
+This script computes the theoretical small-angle X-ray scattering (SAXS) intensity from an oil-in-water emulsion whose droplet surfaces are decorated with proteins. Protein positions are placed by a Monte Carlo procedure directly from atomic coordinates read from a PDB file. The oil droplet is treated as a uniform sphere with excluded volume, and the full Debye sum is evaluated via a weighted distance histogram to handle the large number of atom pairs efficiently.
+
+Key features:
+
+- **Droplet-size polydispersity** — incoherent average over a lognormal or Gaussian radius grid.
+- **Constant surface coverage** — protein count N_i scales with droplet area so surface density is preserved across the ensemble.
+- **Full atomic detail** — protein structure taken directly from a PDB file; per-atom electron density contrasts assigned based on radial position relative to the oil/water interface.
+- **Oil–protein cross term** — computed efficiently via a radial histogram of atom positions, avoiding an explicit double loop.
+- **Protein orientation control** — random or aligned (radial, tangential, or custom axis) with optional angular noise and spin control.
+- **Thermal perturbations** — optional Gaussian displacements of protein atom positions to mimic thermal motion.
+- **PDB output** — writes visualisation files for the representative droplet (combined, proteins-only, oil-surface).
+
+## Requirements
+
+A PDB coordinate file for the protein (default: `lys.pdb`) must be in the working directory.
+
+```bash
+pip install numpy matplotlib
+```
+
+## Usage
+
+1. Place the PDB file in the working directory and set `PDB_FILE` at the top of the script.
+2. Adjust the user parameters (see below).
+3. Run:
+   ```bash
+   python MC_ContrastDroplet_poly.py
+   ```
+4. Inspect the plots and output files produced in the working directory.
+
+## Parameters
+
+All parameters are defined in the `# USER PARAMETERS` block at the top of the script.
+
+### Core Physical Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `PDB_FILE` | `"lys.pdb"` | Path to the protein PDB coordinate file |
+| `Ro` | `1000 Å` | Mean droplet radius |
+| `N_proteins` | `5000` | Number of proteins on a droplet of radius Ro (0 = bare oil droplet) |
+| `penetration_min` | `-0.5` | Minimum penetration depth (fraction of protein radius) |
+| `penetration_max` | `0.5` | Maximum penetration depth (fraction of protein radius) |
+| `rho_oil` | `−0.06 e/Å³` | Electron density contrast of oil vs. solvent |
+| `rho_protein` | `0.12 e/Å³` | Electron density contrast of protein atoms vs. solvent |
+| `rho_water` | `0.0 e/Å³` | Electron density contrast of water (reference = 0) |
+| `USE_OIL_SPHERE` | `True` | Include oil sphere scattering and oil–protein cross term |
+| `rho_oil_bulk` | `−0.06 e/Å³` | Electron density contrast used for the oil sphere amplitude |
+
+### Size Polydispersity
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `POLYDISPERSE` | `True` | Enable droplet-size polydispersity |
+| `SIZE_DISTRIBUTION` | `"lognormal"` | Radius distribution shape: `'lognormal'` or `'gaussian'` |
+| `SIZE_PDI` | `0.1` | Relative width σ_R / ⟨R⟩ (0.10–0.20 recommended) |
+| `N_RADII` | `25` | Number of discrete radii in the grid (≥ 2) |
+| `N_SIGMA` | `2.5` | Grid spans ± N_SIGMA standard deviations around the mean |
+| `SURFACE_DENSITY` | `None` | Proteins per nm² (None = derived from N_proteins at Ro) |
+
+### Protein Orientation
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ALIGNED_PROTEINS` | `False` | `True` = use alignment logic below; `False` = random orientations |
+| `ALIGNMENT_AXIS` | `"radial"` | `'radial'` (point outward), `'tangential'` (lie flat), or `'custom'` |
+| `CUSTOM_ALIGNMENT` | `[0, 0, 1]` | Target vector when `ALIGNMENT_AXIS = 'custom'` |
+| `ALIGNMENT_NOISE_DEGREES` | `0.0` | Angular spread around the alignment direction (0 = perfect) |
+| `PROTEIN_ALIGNMENT_AXIS` | `"z"` | Which protein body axis (`'x'`, `'y'`, `'z'`) is aligned to the target |
+| `CONTROL_SPIN` | `False` | Fix rotation around the alignment axis |
+| `SPIN_ANGLE_DEGREES` | `0.0` | Spin angle (degrees) when `CONTROL_SPIN = True` |
+
+### Thermal Perturbations
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ADD_THERMAL_NOISE` | `False` | Add random Gaussian displacements to atom positions |
+| `THERMAL_NOISE_AMPLITUDE` | `2.0 Å` | RMS displacement amplitude (typical: 1–5 Å) |
+| `PERTURB_PENETRATION` | `False` | Also randomise penetration depth slightly |
+| `PENETRATION_NOISE_AMPLITUDE` | `0.1` | Noise amplitude as a fraction of protein radius |
+
+### Computation and Output
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `qmin, qmax, qN` | `0.002, 0.45, 2000` | q-range (Å⁻¹) and number of points (log-spaced) |
+| `dr_histogram` | `1.0 Å` | Bin width for the protein–protein distance histogram |
+| `max_pairs_sample` | `100 000 000` | Maximum atom pairs sampled per droplet |
+| `dr_cross` | `0.25 Å` | Bin width for the radial histogram used in the oil–protein cross term |
+| `RANDOM_SEED` | `None` | Integer for reproducible runs; `None` = random each run |
+| `VERBOSE` | `False` | Print detailed per-droplet diagnostics |
+| `OUT_PREFIX` | `"pdb_droplet"` | Prefix for all output file names |
+
+## Algorithm
+
+1. **Load PDB** — atomic positions read and centred at the origin. Effective protein radius R_p = max atom distance from centre.
+2. **Build size grid** — radius grid {R_i} and weights {w_i} drawn from the chosen distribution.
+3. **Per-droplet MC** — for each R_i: place N_i proteins on the surface using rejection sampling to enforce a minimum centre-to-centre separation (1.4 R_p). Optionally apply aligned orientations and thermal noise.
+4. **Contrast assignment** — each atom is assigned Δρ = ρ_protein − ρ_oil (atom inside droplet) or Δρ = ρ_protein − ρ_water (atom outside).
+5. **Debye sum** — protein–protein scattering computed from a weighted pair-distance histogram (sampled for large systems). Oil scattering and cross terms added analytically.
+6. **Polydisperse average** — I_poly(q) = Σ_i w_i I_i(q) (number-averaged per droplet). I_vol(q) = I_poly(q) / Σ_i w_i V_i (per unit oil volume).
+
+## Output Files
+
+| File | Contents |
+|------|----------|
+| `pdb_droplet_saxs.dat` | q, I_total — size-averaged intensity per droplet |
+| `pdb_droplet_saxs_per_volume.dat` | q, I_total / ⟨V⟩ — intensity per unit oil volume |
+| `pdb_droplet_size_distribution.dat` | R, weight, N_proteins, footprint coverage for each radius |
+| `pdb_droplet_per_radius.dat` | q, I_i(q) for every radius in the grid |
+| `pdb_droplet_components.dat` | q, I_total, I_protein, I_oil, I_cross (size-averaged) |
+| `pdb_droplet_protein_only.dat` | q, I_protein |
+| `pdb_droplet_oil_only.dat` | q, I_oil |
+| `pdb_droplet_cross_term.dat` | q, I_cross |
+| `pdb_droplet_saxs.png` | Log–log plot: total and component intensities |
+| `pdb_droplet_combined.pdb` | Visualisation: oil surface points + protein atoms |
+| `pdb_droplet_proteins.pdb` | Protein atoms only (representative droplet) |
+| `pdb_droplet_oil_surface.pdb` | Oil surface points only (representative droplet) |
+
+The file prefix `pdb_droplet` is set by `OUT_PREFIX`.
+
+## Notes and Tips
+
+- **Aliasing warning** — the script prints the q-range over which the discretely sampled size distribution is alias-free. Above that limit the averaged curve shows residual ripples; increase `N_RADII` or reduce `N_SIGMA` to push the limit higher.
+- **Surface jamming** — if `N_proteins` is too high relative to `Ro` and the protein size, the rejection-sampling loop cannot place all proteins and stops early. The footprint coverage (printed per droplet) will exceed ~90% when this is imminent.
+- **Reproducibility** — set `RANDOM_SEED` to an integer to get identical results across runs.
+- **Performance** — runtime scales with N_proteins × N_atoms_per_protein × N_RADII. For large systems, reduce `max_pairs_sample` (noise averages out over the radius ensemble) or set `VERBOSE = True` to monitor progress.
+- **Bare oil droplet** — set `N_proteins = 0` to compute the scattering of a pure emulsion droplet with no adsorbed protein.
+
+## Citation
+
+If you use this software, please cite the accompanying manuscript:
+
+> López Hernández, M., Dybdal-Grasberger, K. F., Corredig, M. & Pedersen, J. S.
+> *Determination of structure and surface coverage of proteins stabilizing oil-in-water emulsions based on small-angle X-ray scattering.*
+> (manuscript under review, 2026)
