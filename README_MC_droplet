@@ -32,6 +32,7 @@ pip install numpy matplotlib
    ```bash
    python MC_ContrastDroplet_poly.py
    ```
+3.2 Alternatively run using spyder6.1.8 console
 4. Inspect the plots and output files produced in the working directory.
 
 ## Parameters
